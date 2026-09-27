@@ -1,0 +1,12 @@
+{
+  "name": "y2mate-scraper",
+  "version": "1.0.0",
+  "description": "Scraper for y2mate.com",
+  "main": "y2mate.js",
+  "scripts": {
+    "scrape": "node y2mate.js"
+  },
+  "dependencies": {
+    "jsdom": "^24.0.0"
+  }
+}
