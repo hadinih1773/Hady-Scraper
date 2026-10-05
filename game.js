@@ -1,61 +1,59 @@
 const axios = require("axios");
-const fs = require("fs");
-const path = require("path");
 
-const LOCAL_DB = path.join(__dirname, "database/games");
+const BASE_URL = "https://raw.githubusercontent.com/hadinih1773/game/main/games";
 
 const GAMES = {
   family100: {
-    file: "family100.json",
+    url: `${BASE_URL}/family100.json`,
     pick: (data) => {
       const item = data[Math.floor(Math.random() * data.length)];
       return { soal: item.soal, jawaban: item.jawaban.join(", ") };
     }
   },
   susunkata: {
-    file: "susunkata.json",
+    url: `${BASE_URL}/susunkata.json`,
     pick: (data) => {
       const item = data[Math.floor(Math.random() * data.length)];
       return { soal: `Susun kata: ${item.soal}\nTipe: ${item.tipe}`, jawaban: item.jawaban };
     }
   },
   tebakbendera: {
-    file: "tebakbendera2.json",
+    url: `${BASE_URL}/tebakbendera2.json`,
     pick: (data) => {
       const item = data[Math.floor(Math.random() * data.length)];
       return { soal: `Bendera: ${item.img.replace("http://", "https://")}`, jawaban: item.name };
     }
   },
   tebakgambar: {
-    file: "tebakgambar.json",
+    url: `${BASE_URL}/tebakgambar.json`,
     pick: (data) => {
       const item = data[Math.floor(Math.random() * data.length)];
       return { soal: `Gambar: ${item.img.replace("http://", "https://")}`, jawaban: item.jawaban };
     }
   },
   tebakkata: {
-    file: "tebakkata.json",
+    url: `${BASE_URL}/tebakkata.json`,
     pick: (data) => {
       const item = data[Math.floor(Math.random() * data.length)];
       return { soal: item.soal, jawaban: item.jawaban };
     }
   },
   tebaktebakan: {
-    file: "tebaktebakan.json",
+    url: `${BASE_URL}/tebaktebakan.json`,
     pick: (data) => {
       const item = data[Math.floor(Math.random() * data.length)];
       return { soal: item.soal, jawaban: item.jawaban };
     }
   },
   tekateki: {
-    file: "tekateki.json",
+    url: `${BASE_URL}/tekateki.json`,
     pick: (data) => {
       const item = data[Math.floor(Math.random() * data.length)];
       return { soal: item.soal, jawaban: item.jawaban };
     }
   },
   siapakahaku: {
-    file: "siapakahaku.json",
+    url: `${BASE_URL}/siapakahaku.json`,
     pick: (data) => {
       const item = data[Math.floor(Math.random() * data.length)];
       return { soal: item.soal, jawaban: item.jawaban };
@@ -63,20 +61,23 @@ const GAMES = {
   }
 };
 
-// Additional games from local DB
+// Additional games from GitHub
 const EXTRA_GAMES = {
-  asahotak: { file: "asahotak.json", fields: ["soal", "jawaban"] },
-  caklontong: { file: "caklontong.json", fields: ["soal", "jawaban"] },
-  tebakkalimat: { file: "tebakkalimat.json", fields: ["soal", "jawaban"] },
-  tebakkimia: { file: "tebakkimia.json", fields: ["unsur", "lambang"] },
-  tebaklirik: { file: "tebaklirik.json", fields: ["soal", "jawaban"] },
-  tebakkabupaten: { file: "tebakkabupaten.json", fields: ["title", "url"] }
+  asahotak: { url: `${BASE_URL}/asahotak.json`, fields: ["soal", "jawaban"] },
+  caklontong: { url: `${BASE_URL}/caklontong.json`, fields: ["soal", "jawaban"] },
+  tebakkalimat: { url: `${BASE_URL}/tebakkalimat.json`, fields: ["soal", "jawaban"] },
+  tebakkimia: { url: `${BASE_URL}/tebakkimia.json`, fields: ["unsur", "lambang"] },
+  tebaklirik: { url: `${BASE_URL}/tebaklirik.json`, fields: ["soal", "jawaban"] },
+  tebakkabupaten: { url: `${BASE_URL}/tebakkabupaten.json`, fields: ["title", "url"] }
 };
 
-function loadLocalGame(filename) {
-  const filepath = path.join(LOCAL_DB, filename);
-  if (!fs.existsSync(filepath)) return null;
-  return JSON.parse(fs.readFileSync(filepath, "utf-8"));
+async function fetchGameData(url) {
+  try {
+    const res = await axios.get(url, { timeout: 10000 });
+    return res.data;
+  } catch (err) {
+    throw new Error(`Gagal fetch ${url}: ${err.message}`);
+  }
 }
 
 async function playGame(gameName) {
@@ -85,15 +86,18 @@ async function playGame(gameName) {
     // Check extra games
     const extra = EXTRA_GAMES[gameName];
     if (extra) {
-      const data = loadLocalGame(extra.file);
-      if (!data) return console.log(JSON.stringify({ error: true, message: "File not found" }, null, 2));
-      const item = data[Math.floor(Math.random() * data.length)];
-      return console.log(JSON.stringify({
-        game: gameName,
-        soal: item[extra.fields[0]],
-        jawaban: item[extra.fields[1]],
-        timestamp: new Date().toISOString()
-      }, null, 2));
+      try {
+        const data = await fetchGameData(extra.url);
+        const item = data[Math.floor(Math.random() * data.length)];
+        return console.log(JSON.stringify({
+          game: gameName,
+          soal: item[extra.fields[0]],
+          jawaban: item[extra.fields[1]],
+          timestamp: new Date().toISOString()
+        }, null, 2));
+      } catch (err) {
+        return console.log(JSON.stringify({ error: true, message: err.message }, null, 2));
+      }
     }
     
     return console.log(JSON.stringify({
@@ -104,9 +108,7 @@ async function playGame(gameName) {
   }
 
   try {
-    const data = loadLocalGame(game.file);
-    if (!data) throw new Error(`File ${game.file} not found`);
-    
+    const data = await fetchGameData(game.url);
     const { soal, jawaban } = game.pick(data);
     
     console.log(JSON.stringify({
