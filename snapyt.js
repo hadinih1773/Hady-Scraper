@@ -40,6 +40,8 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { URL: URLParser } = require('url');
+const axios = require('axios');
+const FormData = require('form-data');
 
 const BASE_URL = 'https://www.snapyt.app';
 const AJAX_URL = BASE_URL + '/wp-admin/admin-ajax.php';
@@ -631,6 +633,158 @@ if (require.main === module) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Upload to tmpfiles.org & extract direct download URL               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Upload buffer ke tmpfiles.org dan ekstrak direct download URL dari halaman HTML
+ * @param {Buffer} buffer - isi file
+ * @param {Object} opts
+ * @param {string} opts.filename - wajib, mis: "video.mp4" / "audio.mp3"
+ * @param {string} [opts.contentType] - opsional, mis: "video/mp4"
+ * @param {number} [opts.timeoutMs=60000]
+ * @returns {Promise<string>} direct download URL
+ */
+async function uploadToTmpFiles(buffer, opts) {
+  if (!Buffer.isBuffer(buffer)) throw new Error('buffer harus Buffer');
+  if (!opts?.filename) throw new Error('opts.filename wajib (contoh: video.mp4)');
+
+  const form = new FormData();
+  form.append('file', buffer, {
+    filename: opts.filename,
+    contentType: opts.contentType || 'application/octet-stream',
+    knownLength: buffer.length,
+  });
+
+  const res = await axios.post('https://tmpfiles.org/api/v1/upload', form, {
+    headers: {
+      ...form.getHeaders(),
+      Accept: 'application/json',
+    },
+    timeout: opts.timeoutMs ?? 60_000,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: () => true,
+  });
+
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(
+      `Upload gagal (HTTP ${res.status}): ${
+        typeof res.data === 'string' ? res.data : JSON.stringify(res.data)
+      }`
+    );
+  }
+
+  const pageUrl = res.data?.data?.url;
+  if (!pageUrl) throw new Error('Response tidak ada data.url');
+
+  // Fetch halaman HTML dan ekstrak direct download link
+  const pageRes = await axios.get(pageUrl, {
+    headers: { 'User-Agent': USER_AGENT },
+    timeout: 30000,
+    validateStatus: () => true,
+  });
+
+  const html = pageRes.data;
+  // Cari link download di HTML: <a class="download" href="https://tmpfiles.org/dl/...">
+  const m = html.match(/<a[^>]*class="download"[^>]*href="([^"]*)"/i);
+  if (!m) throw new Error('Direct download link tidak ditemukan di halaman tmpfiles');
+  
+  return m[1];
+}
+
+/**
+ * Download buffer dari URL
+ * @param {string} url
+ * @param {Object} headers
+ * @returns {Promise<Buffer>}
+ */
+async function downloadToBuffer(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const doFetch = (u, count) => {
+      if (count > MAX_REDIRECTS) return reject(new Error('Too many redirects'));
+      const urlObj = new URLParser(u);
+      const mod = urlObj.protocol === 'https:' ? https : http;
+
+      const req = mod.get(
+        u,
+        {
+          headers: { 'User-Agent': USER_AGENT, ...headers },
+          timeout: 120000,
+        },
+        (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            res.resume();
+            return doFetch(new URLParser(res.headers.location, u).href, count + 1);
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            return reject(new Error(`HTTP ${res.statusCode} saat download`));
+          }
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => resolve(Buffer.concat(chunks)));
+        }
+      );
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Timeout saat download'));
+      });
+      req.on('error', reject);
+    };
+    doFetch(url, 0);
+  });
+}
+
+/**
+ * Ambil video YouTube, download MP4 (video+audio) dan MP3, upload ke tmpfiles.org
+ * @param {string} youtubeUrl - URL YouTube
+ * @returns {Promise<{title:string, thumbnail:string, mp3Url:string, mp4Url:string}>}
+ */
+async function getSnapytDownload(youtubeUrl) {
+  console.log(`[1/5] Mengambil info video: ${youtubeUrl}`);
+  const info = await getVideoInfo(youtubeUrl);
+
+  console.log('[2/5] Mencari format MP4 (video+audio)...');
+  const mp4Format = pickFormat(info, { kind: 'video+audio' });
+  if (!mp4Format) throw new Error('Format video+audio tidak ditemukan');
+
+  console.log('[3/5] Mencari format MP3 (audio-only)...');
+  const mp3Format = pickFormat(info, { kind: 'audio-only', ext: 'm4a' }) ||
+                     pickFormat(info, { kind: 'audio-only' });
+  if (!mp3Format) throw new Error('Format audio tidak ditemukan');
+
+  console.log('[4/5] Downloading MP4...');
+  const mp4Buffer = await downloadToBuffer(mp4Format.downloadUrl || mp4Format.streamUrl, {
+    Referer: 'https://www.snapyt.app/',
+  });
+
+  console.log('[4/5] Downloading MP3...');
+  const mp3Buffer = await downloadToBuffer(mp3Format.downloadUrl || mp3Format.streamUrl, {
+    Referer: 'https://www.snapyt.app/',
+  });
+
+  console.log('[5/5] Upload ke tmpfiles.org...');
+  const [mp4Url, mp3Url] = await Promise.all([
+    uploadToTmpFiles(mp4Buffer, {
+      filename: `${info.filenameBase || 'video'}.${mp4Format.ext || 'mp4'}`,
+      contentType: `video/${mp4Format.ext || 'mp4'}`,
+    }),
+    uploadToTmpFiles(mp3Buffer, {
+      filename: `${info.filenameBase || 'audio'}.mp3`,
+      contentType: 'audio/mpeg',
+    }),
+  ]);
+
+  return {
+    title: info.title,
+    thumbnail: info.thumbnail,
+    mp3Url,
+    mp4Url,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Exports                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -640,6 +794,9 @@ module.exports = {
   pickFormat,
   download,
   downloadMp3,
+  downloadToBuffer,
+  uploadToTmpFiles,
+  getSnapytDownload,
   normalizeYouTubeUrl,
   extractVideoId,
 };
