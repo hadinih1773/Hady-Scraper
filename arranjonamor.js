@@ -98,6 +98,8 @@ function parseMovieCards($) {
                 // Clean up
                 if (title && title.length > 2) {
                     title = title.replace(/\s+/g, ' ').trim();
+                    // Remove "Permalink ke: " prefix
+                    title = title.replace(/^Permalink ke:\s*/i, '');
                     
                     if (url && !url.startsWith('http')) {
                         url = BASE_URL + (url.startsWith('/') ? '' : '/') + url;
@@ -202,6 +204,8 @@ async function getMovieDetails(movieUrl) {
     // Title
     details.title = $('h1.post-title, h1.entry-title, h1.movie-title, .movie-title h1, .single-title').first().text().trim() ||
                     $('title').text().replace(/\s*\|.*$/, '').trim();
+    // Remove "Permalink ke: " prefix
+    details.title = details.title.replace(/^Permalink ke:\s*/i, '');
     
     // Thumbnail/Poster
     details.thumbnail = $('.poster img, .movie-poster img, .single-poster img, .movie-image img, .featured-image img').first().attr('src') ||
@@ -296,6 +300,7 @@ async function main() {
 
     if (!command) {
         console.log(JSON.stringify({
+            creator: "Hady",
             usage: 'node arranjonamor.js <command> [params]',
             commands: {
                 search: 'node arranjonamor.js search "query"',
@@ -349,6 +354,7 @@ async function main() {
         
         console.log(JSON.stringify({
             status: true,
+            creator: "Hady",
             total: Array.isArray(result) ? result.length : 1,
             data: result
         }, null, 2));
@@ -356,6 +362,7 @@ async function main() {
     } catch (error) {
         console.log(JSON.stringify({
             status: false,
+            creator: "Hady",
             error: error.message
         }, null, 2));
         process.exit(1);
