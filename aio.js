@@ -88,6 +88,7 @@ class DLBunnyClient {
   }
 
   async preprocessCaptcha(buffer) {
+<<<<<<< HEAD
     // Try multiple preprocessing strategies
     const strategies = [
       // Strategy 1: resize + greyscale + threshold
@@ -98,6 +99,43 @@ class DLBunnyClient {
       async (buf) => await sharp(buf).resize({ width: 200, height: 80, fit: "fill" }).threshold(128).png().toBuffer(),
       // Strategy 4: original with just resize
       async (buf) => await sharp(buf).resize({ width: 200, height: 80, fit: "fill" }).png().toBuffer(),
+=======
+    // Try multiple preprocessing strategies for better OCR
+    const strategies = [
+      // Strategy 1: Large resize + threshold
+      async (buf) => await sharp(buf)
+        .resize({ width: 300, height: 120, fit: "fill" })
+        .greyscale()
+        .threshold(140)
+        .png()
+        .toBuffer(),
+      // Strategy 2: Moderate resize + normalize
+      async (buf) => await sharp(buf)
+        .resize({ width: 250, height: 100, fit: "fill" })
+        .greyscale()
+        .normalize()
+        .png()
+        .toBuffer(),
+      // Strategy 3: Original size + threshold
+      async (buf) => await sharp(buf)
+        .greyscale()
+        .threshold(128)
+        .png()
+        .toBuffer(),
+      // Strategy 4: Large + normalize + threshold
+      async (buf) => await sharp(buf)
+        .resize({ width: 300, height: 120, fit: "fill" })
+        .greyscale()
+        .normalize()
+        .threshold(150)
+        .png()
+        .toBuffer(),
+      // Strategy 5: Simple resize
+      async (buf) => await sharp(buf)
+        .resize({ width: 200, height: 80, fit: "fill" })
+        .png()
+        .toBuffer(),
+>>>>>>> master
     ];
     return strategies;
   }
@@ -110,8 +148,13 @@ class DLBunnyClient {
       try {
         const processed = await strategies[i](buffer);
         const { data: { text } } = await this.worker.recognize(processed);
+<<<<<<< HEAD
         const result = text.trim();
         if (result) return result;
+=======
+        const result = text.trim().replace(/\D/g, ''); // Keep only digits
+        if (result.length === 4) return result;
+>>>>>>> master
       } catch (e) {
         // try next strategy
       }
@@ -119,7 +162,11 @@ class DLBunnyClient {
     return "";
   }
 
+<<<<<<< HEAD
   async solveAuto(maxRetry = 20, delayMs = 1000) {
+=======
+  async solveAuto(maxRetry = 30, delayMs = 1500) {
+>>>>>>> master
     for (let attempt = 1; attempt <= maxRetry; attempt++) {
       try {
         const captchaImage = await this.getCaptchaImage();

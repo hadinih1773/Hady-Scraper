@@ -15,7 +15,7 @@ if (!query) {
 
 async function searchMovie() {
     try {
-        // Use DuckDuckGo HTML scrape for movie search (no API key needed)
+        // Use DuckDuckGo HTML scrape for movie search (no API key needed, no Cloudflare)
         const searchQuery = encodeURIComponent(query + ' film movie imdb');
         const searchUrl = `https://html.duckduckgo.com/html/?q=${searchQuery}`;
         
@@ -85,25 +85,6 @@ async function searchMovie() {
                 }
             }
         });
-
-        if (results.length === 0) {
-            // Try alternative selector
-            $('a.result__url, a.result__snippet, .result__snippet a, h2 a').each((i, el) => {
-                const $el = $(el);
-                const title = $el.text().trim();
-                const url = $el.attr('href');
-                
-                if (title && title.length > 5 && url && url.startsWith('http')) {
-                    if (!results.some(r => r.url === url)) {
-                        results.push({
-                            title: title.substring(0, 100),
-                            url,
-                            thumbnail: null
-                        });
-                    }
-                }
-            });
-        }
 
         // Remove duplicates
         const uniqueResults = results.filter((item, index, self) => 
