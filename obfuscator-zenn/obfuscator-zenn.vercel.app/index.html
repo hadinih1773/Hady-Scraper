@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Obfuscator - Community Zenn</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+</head>
+<body>
+
+    <div id="disclaimerModal" class="modal-overlay">
+        <div class="modal-content">
+            <h2><i class="fas fa-exclamation-triangle"></i> PERINGATAN</h2>
+            <p>
+                <strong>Obfuscator ini bersifat publik dan dapat digunakan oleh siapa saja.</strong><br><br>
+                Jika Anda menemukan script yang diobfuscate menggunakan website ini dan di dalamnya terdapat <b>Keylogger</b> atau malware lainnya, itu <b>BUKAN</b> tanggung jawab dari <b>(Community Zenn)</b>.<br><br>
+                Dilarang keras menggunakan website ini untuk meng-obfuscate script yang mengandung Keylogger atau bertujuan merugikan orang lain!
+            </p>
+            <button class="modal-btn" onclick="closeModal()">SAYA MENGERTI</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1><i class="fa-solid fa-lock"></i> OBFUSCATOR</h1>
+            <div class="subtitle"><i class="fa-solid fa-shield-halved"></i> Community Zenn - Protect Your Script</div>
+        </div>
+
+        <div class="social-buttons">
+            <a href="https://youtube.com/@zennlua?si=LVi56ylirjEw-c36" target="_blank" class="btn-social btn-youtube">
+                <i class="fa-brands fa-youtube"></i> YouTube
+            </a>
+            <a href="https://discord.gg/PXGdvaWuad" target="_blank" class="btn-social btn-discord">
+                <i class="fa-brands fa-discord"></i> Discord
+            </a>
+            <a href="https://zennwebsite.vercel.app/" target="_blank" class="btn-social btn-website">
+                <i class="fa-solid fa-globe"></i> Website
+            </a>
+        </div>
+
+        <div class="form-group">
+            <label for="sourceCode"><i class="fa-solid fa-code"></i> Original Script</label>
+            <textarea id="sourceCode" placeholder="Tempel kode Lua di sini..."></textarea>
+            <div id="errorMsg" class="alert"><i class="fa-solid fa-triangle-exclamation"></i> Kode tidak boleh kosong!</div>
+        </div>
+
+        <div class="file-upload-wrapper">
+            <input type="file" id="fileInput" onchange="uploadFile(event)">
+            <span class="file-info" id="fileInfo"> Belum ada file</span>
+        </div>
+
+        <div class="turnstile-wrapper">
+            <div class="cf-turnstile"
+                 data-sitekey="0x4AAAAAAFAWUXxjJKNYxWfR"
+                 data-theme="dark"
+                 data-callback="onTurnstileSuccess"
+                 data-expired-callback="onTurnstileExpired"></div>
+        </div>
+
+        <div class="btn-group" style="margin-top:10px;">
+            <button class="btn-clear" onclick="clearFields()">
+                <i class="fa-solid fa-trash"></i> Clear
+            </button>
+        </div>
+
+        <button class="btn-obfuscate" id="obfBtn" onclick="processObfuscate()" style="margin-top:15px;">
+            <i class="fa-solid fa-microchip"></i> Obfuscate Now
+        </button>
+
+        <div class="btn-group" style="margin-top:15px;">
+            <button class="btn-download" onclick="downloadResult()">
+                <i class="fa-solid fa-download"></i> Download
+            </button>
+        </div>
+
+        <div class="footer">
+            <span>Website Resmi Yang Di kembangkan Oleh</span>
+            <span>© Community Zenn</span>
+            <span>Website : Actived</span>
+        </div>
+    </div>
+
+    <audio id="bgMusic" loop autoplay>
+        <source src="https://teh-hijau-community-zenn.netlify.app/TULUS-Teh-Hijau.mp3" type="audio/mpeg">
+        Browser tidak mendukung audio.
+    </audio>
+
+    <div id="toast" class="toast"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
