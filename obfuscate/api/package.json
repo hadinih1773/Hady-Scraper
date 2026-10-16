@@ -1,0 +1,14 @@
+{
+  "name": "endpoint-zenn-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Rekonstruksi API endpoint-zenn.vercel.app (obfuscate + compile LuaJIT 32/64bit + deobfuscate)",
+  "main": "dev-server.js",
+  "scripts": {
+    "start": "node dev-server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "notes": "Untuk compile perlu binary sistem 'luajit64' & 'luajit32' (atau override via env LUAJIT64_BIN / LUAJIT32_BIN). Obfuscate menghubungi upstream wearedevs.net langsung via fetch bawaan Node 18+, tidak butuh package NPM."
+}
