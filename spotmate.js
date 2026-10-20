@@ -108,6 +108,52 @@ function json(buf) {
   try { return JSON.parse(t); } catch (e) { return { error: 'Bukan JSON: ' + t.slice(0, 120) }; }
 }
 
+// Parse Spotify URL / URI
+function parseSpotifyInput(input) {
+  // Spotify URL: https://open.spotify.com/track/6tjXve7glh158rNl3cXq3y?si=...
+  let m = input.match(/spotify\.com\/(?:intl-[a-z]+\/)?(track|album|playlist|artist)\/([a-zA-Z0-9]+)/);
+  if (m) return { type: m[1], id: m[2] };
+  // Spotify URI: spotify:track:6tjXve7glh158rNl3cXq3y
+  m = input.match(/^spotify:(track|album|playlist|artist):([a-zA-Z0-9]+)$/i);
+  if (m) return { type: m[1].toLowerCase(), id: m[2] };
+  // Just ID (22 chars base62)
+  if (/^[a-zA-Z0-9]{22}$/.test(input)) return { type: 'track', id: input };
+  return null;
+}
+
+// Get track info from Spotify oEmbed
+async function getSpotifyTrackInfo(trackId) {
+  try {
+    const res = await axios.get('https://open.spotify.com/oembed', {
+      params: { url: `https://open.spotify.com/track/${trackId}` },
+      headers: { 'User-Agent': UA }
+    });
+    const data = res.data;
+    // oEmbed title format: "Track Name - Artist Name" or just "Track Name"
+    let title = data.title || 'Unknown';
+    let artist = 'Unknown';
+    // Try to extract artist from title if it contains " - "
+    if (title.includes(' - ')) {
+      const parts = title.split(' - ');
+      title = parts[0].trim();
+      artist = parts.slice(1).join(' - ').trim();
+    }
+    return {
+      title: title,
+      artist: artist,
+      cover: data.thumbnail_url || '',
+      spotify_url: `https://open.spotify.com/track/${trackId}`
+    };
+  } catch (e) {
+    return {
+      title: 'Unknown',
+      artist: 'Unknown',
+      cover: '',
+      spotify_url: `https://open.spotify.com/track/${trackId}`
+    };
+  }
+}
+
 async function spotifyDl(query) {
   const cookie = await cookieManager.getCookie();
   
@@ -120,29 +166,125 @@ async function spotifyDl(query) {
     'Accept': 'application/json'
   };
 
-  // Parse query - support "Judul - Artis"
-  let title = query;
+  // Check if input is Spotify URL/URI
+  const spotify = parseSpotifyInput(query);
+  let title = '';
   let artist = '';
+  let cover = '';
+  let duration_ms = 0;
+  let spotify_url = '';
 
-  if (query.includes(' - ')) {
-    const parts = query.split(' - ');
-    title = parts[0].trim();
-    artist = parts.slice(1).join(' - ').trim();
-  }
-
-  // Jika tidak ada artist, cari dari search
-  if (!artist) {
-    console.log(`🔍 Mencari: ${title}`);
+  if (spotify && spotify.type === 'track') {
+    // Spotify track URL/ID detected
+    console.log(`🔗 Spotify Track: ${spotify.id}`);
+    const trackInfo = await getSpotifyTrackInfo(spotify.id);
+    title = trackInfo.title;
+    artist = trackInfo.artist;
+    cover = trackInfo.cover;
+    spotify_url = trackInfo.spotify_url;
     
-    // Refresh cookie lagi sebelum search
+    // Use full Spotify URL as query for get-id API (works better)
     const freshCookie = await cookieManager.getCookie();
     headers.Cookie = freshCookie;
     
-    const search = await axios.get(`https://spotsaver.net/api/spotify/?q=${encodeURIComponent(title)}`, {
+    const id = await axios.post('https://spotsaver.net/api/get-id/', { 
+      title: spotify_url, 
+      artist: '' 
+    }, { headers });
+    
+    if (id.headers['set-cookie']) {
+      const newCookie = id.headers['set-cookie'].map(c => c.split(';')[0]).join('; ');
+      cookieManager.cookie = newCookie;
+      cookieManager.lastRefresh = Date.now();
+    }
+    
+    const videoId = id.data?.videoId;
+    if (!videoId) throw new Error('Gagal dapat Video ID dari Spotify URL');
+    console.log(`📌 Video ID: ${videoId}`);
+    
+    // Refresh cookie
+    const freshCookie2 = await cookieManager.getCookie();
+    headers.Cookie = freshCookie2;
+    
+    // Get download URL
+    const fullTitle = `${title} - ${artist}`;
+    const dl = await axios.post('https://spotsaver.net/api/download/', {
+      videoId,
+      candidateIds: [],
+      format: 'mp3',
+      title: fullTitle
+    }, { headers });
+    
+    // Extract metadata from download response filename
+    const dlFilename = dl.data?.filename || '';
+    if (dlFilename) {
+      // Format: "artist - title - artist.mp3" or similar
+      const name = dlFilename.replace(/\.mp3$/i, '');
+      if (name.includes(' - ')) {
+        const parts = name.split(' - ');
+        if (parts.length >= 2) {
+          artist = parts[0].trim();
+          title = parts[1].trim();
+        }
+      }
+    }
+    
+    const url = dl.data?.downloadUrl || dl.data?.url || dl.data?.mediaUrl;
+    if (!url) throw new Error('Gagal dapat URL download');
+    
+    // Download MP3
+    const res = await axios({ 
+      url, 
+      responseType: 'arraybuffer',
+      headers: { 'User-Agent': UA }
+    });
+    
+    const buffer = Buffer.from(res.data);
+    
+    // Upload ke uguu.se
+    const safeTitle = title.replace(/[^\w\s]/g, '').trim() || 'unknown';
+    const safeArtist = artist.replace(/[^\w\s]/g, '').trim() || 'unknown';
+    const filename = `${safeArtist} - ${safeTitle}.mp3`;
+    
+    console.log(`📤 Upload ke uguu.se...`);
+    const downloadUrl = await uploadUguu(buffer, filename);
+    
+    // Return structured JSON response
+    return {
+      ...WM,
+      title: title,
+      artists: artist,
+      album: '',
+      release: '',
+      duration_ms: duration_ms,
+      cover: cover,
+      spotify_url: spotify_url,
+      filename: filename,
+      size: buffer.length,
+      download_url: downloadUrl
+    };
+    
+  } else {
+    // Regular search by query - parse "Title - Artist" format
+    let searchTitle = query;
+    let searchArtist = '';
+    
+    if (query.includes(' - ')) {
+      const parts = query.split(' - ');
+      searchTitle = parts[0].trim();
+      searchArtist = parts.slice(1).join(' - ').trim();
+    }
+    
+    console.log(`🔍 Mencari: ${searchTitle}`);
+    
+    // Refresh cookie
+    const freshCookie = await cookieManager.getCookie();
+    headers.Cookie = freshCookie;
+    
+    const search = await axios.get(`https://spotsaver.net/api/spotify/?q=${encodeURIComponent(searchTitle)}`, {
       headers: { ...headers, 'Content-Type': 'application/json' }
     });
     
-    // Update cookie dari response
     if (search.headers['set-cookie']) {
       const newCookie = search.headers['set-cookie'].map(c => c.split(';')[0]).join('; ');
       cookieManager.cookie = newCookie;
@@ -150,100 +292,94 @@ async function spotifyDl(query) {
     }
     
     const items = search.data?.items || [];
-    if (items.length) {
-      for (const item of items) {
-        if (item && item.name && item.name !== 'Unknown' && item.name !== 'undefined') {
-          title = item.name;
-          artist = item.artists?.map(a => a.name).join(', ') || 
-                   item.artist || 
-                   item.artist_name || 
-                   'Unknown';
-          break;
-        }
+    if (!items.length) throw new Error('Track tidak ditemukan');
+    
+    // Get first valid result
+    let track = null;
+    for (const item of items) {
+      if (item && (item.title || item.name) && (item.title || item.name) !== 'Unknown' && (item.title || item.name) !== 'undefined') {
+        track = item;
+        break;
       }
     }
-  }
-
-  if (!artist || artist === 'Unknown' || artist === 'undefined') {
-    const lastDash = query.lastIndexOf(' - ');
-    if (lastDash > 0) {
-      title = query.substring(0, lastDash).trim();
-      artist = query.substring(lastDash + 3).trim();
+    if (!track) throw new Error('Track valid tidak ditemukan');
+    
+    title = track.title || track.name;
+    artist = track.artists?.map(a => a.name).join(', ') || 
+             track.artist || 
+             track.artist_name || 
+             'Unknown';
+    cover = track.thumbnail || track.image || track.thumb_image || track.album?.images?.[0]?.url || track.cover_url || '';
+    duration_ms = (track.duration_ms || track.duration || 0) * (track.duration_ms ? 1 : 1000); // convert to ms if needed
+    
+    // Validasi
+    if (!title || title === 'undefined' || title === '') title = 'Unknown';
+    if (!artist || artist === 'undefined' || artist === '') artist = 'Unknown';
+    
+    // Get video ID
+    const freshCookie2 = await cookieManager.getCookie();
+    headers.Cookie = freshCookie2;
+    
+    const id = await axios.post('https://spotsaver.net/api/get-id/', { title, artist }, { headers });
+    
+    if (id.headers['set-cookie']) {
+      const newCookie = id.headers['set-cookie'].map(c => c.split(';')[0]).join('; ');
+      cookieManager.cookie = newCookie;
+      cookieManager.lastRefresh = Date.now();
     }
+    
+    const videoId = id.data?.videoId;
+    if (!videoId) throw new Error('Gagal dapat Video ID');
+    console.log(`📌 Video ID: ${videoId}`);
+    
+    // Refresh cookie
+    const freshCookie3 = await cookieManager.getCookie();
+    headers.Cookie = freshCookie3;
+    
+    // Get download URL
+    const fullTitle = `${title} - ${artist}`;
+    const dl = await axios.post('https://spotsaver.net/api/download/', {
+      videoId,
+      candidateIds: [],
+      format: 'mp3',
+      title: fullTitle
+    }, { headers });
+    
+    const url = dl.data?.downloadUrl || dl.data?.url || dl.data?.mediaUrl;
+    if (!url) throw new Error('Gagal dapat URL download');
+    
+    // Download MP3
+    const res = await axios({ 
+      url, 
+      responseType: 'arraybuffer',
+      headers: { 'User-Agent': UA }
+    });
+    
+    const buffer = Buffer.from(res.data);
+    
+    // Upload ke uguu.se
+    const safeTitle = title.replace(/[^\w\s]/g, '').trim() || 'unknown';
+    const safeArtist = artist.replace(/[^\w\s]/g, '').trim() || 'unknown';
+    const filename = `${safeArtist} - ${safeTitle}.mp3`;
+    
+    console.log(`📤 Upload ke uguu.se...`);
+    const downloadUrl = await uploadUguu(buffer, filename);
+    
+    // Return structured JSON response
+    return {
+      ...WM,
+      title: title,
+      artists: artist,
+      album: '',
+      release: '',
+      duration_ms: duration_ms,
+      cover: cover,
+      spotify_url: '',
+      filename: filename,
+      size: buffer.length,
+      download_url: downloadUrl
+    };
   }
-
-  // Validasi
-  if (!title || title === 'undefined' || title === '') {
-    title = 'Unknown';
-  }
-  if (!artist || artist === 'undefined' || artist === '') {
-    artist = 'Unknown';
-  }
-
-  // Refresh cookie sebelum request
-  const freshCookie = await cookieManager.getCookie();
-  headers.Cookie = freshCookie;
-
-  // Get video ID
-  const id = await axios.post('https://spotsaver.net/api/get-id/', { title, artist }, { headers });
-  
-  // Update cookie
-  if (id.headers['set-cookie']) {
-    const newCookie = id.headers['set-cookie'].map(c => c.split(';')[0]).join('; ');
-    cookieManager.cookie = newCookie;
-    cookieManager.lastRefresh = Date.now();
-  }
-  
-  const videoId = id.data?.videoId;
-  if (!videoId) throw new Error('Gagal dapat ID');
-
-  // Refresh cookie lagi
-  const freshCookie2 = await cookieManager.getCookie();
-  headers.Cookie = freshCookie2;
-
-  // Get download URL
-  const fullTitle = `${title} - ${artist}`;
-  const dl = await axios.post('https://spotsaver.net/api/download/', {
-    videoId,
-    candidateIds: [],
-    format: 'mp3',
-    title: fullTitle
-  }, { headers });
-
-  const url = dl.data?.downloadUrl;
-  if (!url) throw new Error('Gagal dapat URL');
-
-  // Download MP3
-  const res = await axios({ 
-    url, 
-    responseType: 'arraybuffer',
-    headers: { 'User-Agent': UA }
-  });
-  
-  const buffer = Buffer.from(res.data);
-  
-  // Upload ke uguu.se
-  const safeTitle = title.replace(/[^\w\s]/g, '').trim() || 'unknown';
-  const safeArtist = artist.replace(/[^\w\s]/g, '').trim() || 'unknown';
-  const filename = `${safeArtist} - ${safeTitle}.mp3`;
-  
-  console.log(`📤 Upload ke uguu.se...`);
-  const downloadUrl = await uploadUguu(buffer, filename);
-  
-  // Return structured JSON response
-  return {
-    ...WM,
-    title: title,
-    artists: artist,
-    album: '',
-    release: '',
-    duration_ms: 0,
-    cover: '',
-    spotify_url: '',
-    filename: filename,
-    size: buffer.length,
-    download_url: downloadUrl
-  };
 }
 
 // CLI
