@@ -170,14 +170,38 @@ async function convert(key, videoId, format, videoQuality, audioBitrate) {
   return { url: (res.data && res.data.url) || null, filename: (res.data && res.data.filename) || null };
 }
 
-async function getTitle(videoId) {
+// Get video info including duration from YouTube innerTube player API
+async function getVideoInfo(videoId) {
   try {
-    const res = await axios.get(
-      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+    const cfg = await getConfig();
+    const res = await yt.post(
+      `${YT}/youtubei/v1/player?key=${cfg.key}&prettyPrint=false`,
+      {
+        context: {
+          client: {
+            clientName: "WEB",
+            clientVersion: cfg.version,
+            hl: "id",
+            gl: "ID",
+          },
+        },
+        videoId,
+      },
+      {
+        headers: {
+          "X-Youtube-Client-Name": "1",
+          "X-Youtube-Client-Version": cfg.version,
+        },
+      }
     );
-    return res.data.title;
+    const details = res.data.videoDetails || {};
+    return {
+      title: details.title || "Unknown",
+      duration: details.lengthSeconds ? parseInt(details.lengthSeconds, 10) : null,
+      viewCount: details.viewCount ? parseInt(details.viewCount, 10) : null,
+    };
   } catch {
-    return "Unknown";
+    return { title: "Unknown", duration: null, viewCount: null };
   }
 }
 
@@ -254,13 +278,23 @@ function formatSize(bytes) {
   return `${size.toFixed(1)} ${units[i]}`;
 }
 
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 async function downloadWithUpload(input, options = {}) {
   const { onlyMp3 = false, onlyMp4 = false } = options;
   
   const videoId = extractVideoId(input);
   if (!videoId) throw new Error("Video ID tidak valid");
 
-  const [title, key] = await Promise.all([getTitle(videoId), getKey(videoId)]);
+  // Get video info including duration
+  const [videoInfo, key] = await Promise.all([getVideoInfo(videoId), getKey(videoId)]);
+  const { title, duration, viewCount } = videoInfo;
 
   const mp4Qualities = [1080, 720, 360, 240, 144];
   const mp3Qualities = [320, 256, 128];
@@ -319,6 +353,9 @@ async function downloadWithUpload(input, options = {}) {
     ...META,
     videoId,
     title,
+    duration, // in seconds
+    durationText: duration ? formatDuration(duration) : null,
+    viewCount,
     url: `https://www.youtube.com/watch?v=${videoId}`,
     thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
     mp4: mp4Url ? {
