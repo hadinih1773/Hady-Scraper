@@ -14,6 +14,10 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { URL } = require('url');
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 /* =========================================================
  *  KONFIG
@@ -254,6 +258,62 @@ async function downloadFacebookVideo(url) {
 }
 
 /* =========================================================
+ *  AUDIO EXTRACTION (requires ffmpeg)
+ * ========================================================= */
+async function extractAudioFromVideo(videoUrl, title) {
+  return new Promise((resolve, reject) => {
+    const tempDir = os.tmpdir();
+    const safeTitle = (title || 'audio').replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').slice(0, 100);
+    const outputFile = path.join(tempDir, `${safeTitle}-${Date.now()}.mp3`);
+
+    const ffmpeg = spawn('ffmpeg', [
+      '-i', videoUrl,
+      '-vn',
+      '-acodec', 'libmp3lame',
+      '-ab', '192k',
+      '-ar', '44100',
+      '-f', 'mp3',
+      '-y',
+      outputFile
+    ]);
+
+    let stderr = '';
+    ffmpeg.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    ffmpeg.on('close', (code) => {
+      if (code === 0 && fs.existsSync(outputFile)) {
+        const stats = fs.statSync(outputFile);
+        resolve({
+          file: outputFile,
+          size: stats.size,
+          sizeText: formatSize(stats.size)
+        });
+      } else {
+        reject(new Error(`FFmpeg error (code ${code}): ${stderr.slice(-500)}`));
+      }
+    });
+
+    ffmpeg.on('error', (err) => {
+      reject(new Error(`FFmpeg not found: ${err.message}. Install ffmpeg to enable MP3 extraction.`));
+    });
+
+    // Timeout after 5 minutes
+    setTimeout(() => {
+      ffmpeg.kill('SIGKILL');
+      reject(new Error('Audio extraction timeout (5 min)'));
+    }, 300000);
+  });
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0, size = bytes;
+  while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+  return `${size.toFixed(1)} ${units[i]}`;
+}
+
+/* =========================================================
  *  EMIT
  * ========================================================= */
 function emit(obj) {
@@ -264,13 +324,15 @@ function emit(obj) {
  *  MAIN
  * ========================================================= */
 (async () => {
-  const url = process.argv[2];
+  const args = process.argv.slice(2);
+  const url = args[0];
+  const extractMp3 = args.includes('--mp3') || args.includes('-a');
 
   if (!url) {
     emit({
       status: false,
       creator: CREATOR,
-      error: 'Pemakaian: node fbdl.js <url_facebook>',
+      error: 'Pemakaian: node fbdl.js <url_facebook> [--mp3]',
       data: []
     });
     process.exit(1);
@@ -287,6 +349,22 @@ function emit(obj) {
         data: []
       });
       process.exit(1);
+    }
+
+    // Extract MP3 if requested
+    if (extractMp3 && (result.urls.hd || result.urls.sd)) {
+      const videoUrl = result.urls.hd || result.urls.sd;
+      try {
+        console.error('→ Extracting MP3 audio...');
+        const audio = await extractAudioFromVideo(videoUrl, result.title);
+        result.urls.mp3 = {
+          file: audio.file,
+          size: audio.size,
+          sizeText: audio.sizeText
+        };
+      } catch (err) {
+        result.urls.mp3 = { error: err.message };
+      }
     }
 
     emit({
