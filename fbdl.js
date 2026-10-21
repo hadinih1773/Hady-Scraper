@@ -18,6 +18,8 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const https = require('https');
+const crypto = require('crypto');
 
 /* =========================================================
  *  KONFIG
@@ -258,7 +260,7 @@ async function downloadFacebookVideo(url) {
 }
 
 /* =========================================================
- *  AUDIO EXTRACTION (requires ffmpeg)
+ *  AUDIO EXTRACTION (requires ffmpeg) + UPLOAD TO UGUU.SE
  * ========================================================= */
 async function extractAudioFromVideo(videoUrl, title) {
   return new Promise((resolve, reject) => {
@@ -305,6 +307,69 @@ async function extractAudioFromVideo(videoUrl, title) {
   });
 }
 
+// Upload to uguu.se (same as ytdl.js)
+async function uploadUguu(buffer, filename) {
+  return new Promise((resolve, reject) => {
+    const boundary = '----izz' + crypto.randomBytes(12).toString('hex');
+    const head = Buffer.from(
+      '--' + boundary + '\r\n' +
+      'Content-Disposition: form-data; name="files[]"; filename="' + filename.replace(/"/g, '') + '"\r\n' +
+      'Content-Type: audio/mpeg\r\n\r\n'
+    );
+    const tail = Buffer.from('\r\n--' + boundary + '--\r\n');
+    const body = Buffer.concat([head, buffer, tail]);
+    const r = https.request({
+      hostname: 'uguu.se',
+      path: '/upload.php',
+      method: 'POST',
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Content-Type': 'multipart/form-data; boundary=' + boundary,
+        'Content-Length': body.length
+      }
+    }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(Buffer.concat(chunks).toString());
+          const url = j && j.files && j.files[0] && j.files[0].url;
+          if (res.statusCode !== 200 || !url) return reject(new Error('Uguu gagal: ' + (j.description || j.message || j.error || 'HTTP ' + res.statusCode)));
+          resolve(url);
+        } catch (e) {
+          reject(new Error('Uguu response parse error: ' + e.message));
+        }
+      });
+    });
+    r.on('error', reject);
+    r.write(body);
+    r.end();
+  });
+}
+
+async function downloadToBuffer(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https:') ? https : require('http');
+    const req = mod.get(url, {
+      headers: { 'User-Agent': USER_AGENT, ...headers },
+      timeout: 180000,
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return resolve(downloadToBuffer(new URL(res.headers.location, url).href, headers));
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode} saat download`));
+      }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout saat download')); });
+    req.on('error', reject);
+  });
+}
+
 function formatSize(bytes) {
   if (!bytes) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -326,13 +391,12 @@ function emit(obj) {
 (async () => {
   const args = process.argv.slice(2);
   const url = args[0];
-  const extractMp3 = args.includes('--mp3') || args.includes('-a');
 
   if (!url) {
     emit({
       status: false,
       creator: CREATOR,
-      error: 'Pemakaian: node fbdl.js <url_facebook> [--mp3]',
+      error: 'Pemakaian: node fbdl.js <url_facebook>',
       data: []
     });
     process.exit(1);
@@ -351,17 +415,22 @@ function emit(obj) {
       process.exit(1);
     }
 
-    // Extract MP3 if requested
-    if (extractMp3 && (result.urls.hd || result.urls.sd)) {
+    // Always extract MP3 and upload to uguu.se if video URLs found
+    if (result.urls.hd || result.urls.sd) {
       const videoUrl = result.urls.hd || result.urls.sd;
       try {
         console.error('→ Extracting MP3 audio...');
         const audio = await extractAudioFromVideo(videoUrl, result.title);
+        console.error('→ Uploading MP3 to uguu.se...');
+        const buffer = fs.readFileSync(audio.file);
+        const mp3Url = await uploadUguu(buffer, path.basename(audio.file));
         result.urls.mp3 = {
-          file: audio.file,
+          url: mp3Url,
           size: audio.size,
           sizeText: audio.sizeText
         };
+        // Clean up temp file
+        fs.unlinkSync(audio.file);
       } catch (err) {
         result.urls.mp3 = { error: err.message };
       }
