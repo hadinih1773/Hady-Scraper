@@ -441,6 +441,7 @@ function emit(obj) {
       creator: CREATOR,
       result: result
     });
+    process.exit(0);
   } catch (e) {
     emit({
       status: false,
